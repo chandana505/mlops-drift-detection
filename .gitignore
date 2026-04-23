@@ -1,5 +1,36 @@
+# Dataset
 creditcard.csv
+
+# Python cache
 __pycache__/
 *.pyc
-alerts.logcreditcard.csv 
+*.pyo
+
+# Virtual environment
 .venv/
+venv/
+
+# Generated logs
+logs/
+*.log
+
+# Serialized model artifacts
+model.pkl
+*.pkl
+
+# Windows / OS artifacts
+nul
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables (credentials)
+.env
+
+# Temp requirements duplicates
+req.txt
+
+

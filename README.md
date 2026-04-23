@@ -1,226 +1,189 @@
-# MLOps Drift Detection & Anomaly Monitoring
+# MLOps Drift Detection (Kafka + Isolation Forest)
 
-## 📋 Project Overview
+## Project Overview
 
-This project is an **MLOps pipeline** designed for **real-time credit card fraud detection** with integrated **data drift monitoring** and **anomaly detection** capabilities. It demonstrates how to build a production-ready machine learning system that continuously monitors model performance and data quality in a streaming environment.
+This repository implements a **local, streaming MLOps demo** for fraud-anomaly monitoring and drift detection on the credit card dataset.
 
-## 🎯 What This Project Does
+For exact first-time setup commands, see `RUN_FROM_SCRATCH.md`.
 
-### 1. **Anomaly Detection**
-- Trains an **Isolation Forest** model on credit card transaction data
-- Identifies fraudulent or anomalous transactions in real-time
-- Calculates anomaly rates per batch to flag potential issues
-
-### 2. **Data Drift Detection**
-The system implements two types of drift detection:
-
-| Drift Type | Method | Purpose |
-|-----------|--------|---------|
-| **Numerical Drift** | PSI (Population Stability Index) | Monitors distribution shifts in transaction amounts |
-| **Categorical Drift** | Chi-Square Test | Detects changes in transaction amount categories (Low/Medium/High) |
-
-### 3. **Data Quality Monitoring**
-- **Missing Values Detection**: Alerts when null values appear in the data stream
-- **Outlier Detection**: Flags batches with excessive statistical outliers (beyond 3 standard deviations)
-
-### 4. **Alerting System**
-- Sends automated **email alerts** via Gmail SMTP when anomalies or drift are detected
-- Alerts triggered for:
-  - Missing values detected
-  - Too many outliers
-  - High anomaly rate (>10%) — possible concept drift
-  - Significant numerical drift (PSI > 0.25)
-  - Categorical drift (Chi-square p-value < 0.05)
-
-### 5. **Streaming Architecture**
-- **Kafka Producer** (`producer.py`): Streams credit card transactions from CSV into a Kafka topic
-- **Kafka Consumer** (`consumer.py`): Consumes transactions in batches and performs real-time inference
+Pipeline flow:
+1. `train_model.py` trains an `IsolationForest` on normal (`Class == 0`) transactions.
+2. `producer.py` streams records to Kafka topic `transactions` and injects synthetic drift after a configured index.
+3. `consumer.py` consumes records in batches, runs inference, computes quality + drift metrics, and logs results.
+4. `main.py` runs producer and consumer concurrently with graceful shutdown.
 
 ---
 
-## 📁 File Structure
+## Current Implementation (As in Code)
+
+### Model
+- Algorithm: `IsolationForest(contamination=0.02, random_state=42)`
+- Training data: only normal transactions (`Class == 0`)
+- Artifact output: `model.pkl`
+
+### Streaming
+- Kafka topic: `transactions`
+- Producer payload: row data + `drift_injected` flag
+- Synthetic drift: for records `i >= PRODUCER_DRIFT_START`, `Amount *= PRODUCER_DRIFT_SCALE`
+
+### Batch Monitoring in Consumer
+For each batch (default `100` rows), the consumer logs:
+- Missing value count
+- Outlier count (`> mean + 3 * std` over numeric columns)
+- Fraud metrics:
+  - Batch Precision / Recall / F1 (shown as `N/A` if no fraud positives in batch)
+  - Cumulative Precision / Recall / F1 over bounded history (`deque(maxlen=10000)`)
+- Anomaly rate (fraction predicted as anomaly)
+- PSI on `Amount` using quantile bins (`bins=5`)
+- Chi-square p-value on `Amount` categories:
+  - `Low < 100`, `100 <= Medium < 1000`, `High >= 1000`
+- Drift classification state and drift precision/recall vs synthetic ground truth
+- False alarms (drift FP count)
+- Batch latency and latency overhead vs baseline
+- Latest producer sent-count from shared queue
+
+### Drift Decision Logic
+- `PSI_THRESHOLD = 0.30`
+- `CHI_P_THRESHOLD = 0.05 / 3` (Bonferroni correction)
+- Drift confirmation requires **2 consecutive** raw drift batches
+- Alert cooldown: **5 batches**
+
+### Email Alerts (Optional)
+`send_email_alert()` is active, but sends email only when `ALERT_EMAIL_PASSWORD` is set.
+
+Alert triggers in code:
+- Missing values > 0
+- Outliers > 50
+- Anomaly rate > 0.10
+- Confirmed drift with `actual_drift=True`
+
+---
+
+## Repository Structure
 
 ```
 mlops-drift-detection/
-├── main.py              # Standalone drift detection simulation (no Kafka needed)
-├── train_model.py       # Trains Isolation Forest and saves as model.pkl
-├── producer.py          # Kafka producer: streams transactions to 'transactions' topic
-├── consumer.py          # Kafka consumer: real-time inference on streaming data
-├── model.pkl            # Serialized trained model
-├── creditcard.csv       # Credit card transaction dataset (not in repo, add manually)
-└── README.md            # This file
+├── main.py
+├── train_model.py
+├── producer.py
+├── consumer.py
+├── logging_config.py
+├── docker-compose.yaml
+├── requirements.txt
+├── PROJECT_PROPOSAL.md
+├── README.md
+├── creditcard.csv
+├── logs/
+└── model.pkl (generated)
 ```
-
-### File Descriptions
-
-| File | Description |
-|------|-------------|
-| `main.py` | End-to-end standalone script that simulates streaming, trains model, and runs all drift/quality checks |
-| `train_model.py` | Loads `creditcard.csv`, trains Isolation Forest, and saves model to `model.pkl` |
-| `producer.py` | Reads `creditcard.csv` row-by-row and publishes to Kafka topic `transactions` |
-| `consumer.py` | Subscribes to `transactions`, accumulates batches of 100, runs model inference |
-| `model.pkl` | Pre-trained Isolation Forest model (generated by `train_model.py`) |
 
 ---
 
-## 🚀 Quick Start: Run Kafka with Docker (No Zookeeper Needed!)
+## Prerequisites
 
-Skip the long Kafka installation and setup by using **Docker**.
+- Python 3.10+
+- Docker + Docker Compose
+- `creditcard.csv` in project root
 
-### Do You Need Zookeeper?
+Install dependencies:
 
-**No.** Your application code (`producer.py`, `consumer.py`) only connects to **Kafka on port 9092**. It never interacts with Zookeeper directly.
+```bash
+pip install -r requirements.txt
+```
 
-Modern Kafka (2.8+) supports **KRaft mode**, which lets Kafka manage itself internally — no Zookeeper required. The `docker-compose.yaml` in this repo uses KRaft mode, so you only run **one container** (Kafka).
+---
 
-### Prerequisites
-- [Docker](https://docs.docker.com/get-docker/) installed
-- [Docker Compose](https://docs.docker.com/compose/install/) installed
-
-### Step 1: Start Kafka
-
-The project already includes `docker-compose.yaml` configured in **KRaft mode** (Zookeeper-free). Just run:
+## Run Kafka (KRaft, No Zookeeper)
 
 ```bash
 docker-compose up -d
 ```
 
-This will:
-- Pull the official Confluent Kafka image
-- Start a single Kafka broker on port `9092`
-- No Zookeeper container is started
-
-### Step 2: Verify Kafka Is Running
-
-```bash
-docker ps
-```
-
-You should see only the `kafka` container running.
-
-### Step 3: Create the Kafka Topic
-
-```bash
-docker exec -it kafka kafka-topics --create --topic transactions --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
-```
-
-Verify the topic was created:
+Verify topic:
 
 ```bash
 docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092
 ```
 
-### Step 4: Stop the Services
+Stop services:
 
 ```bash
 docker-compose down
 ```
 
-To stop and remove all containers and volumes:
-
-```bash
-docker-compose down -v
-```
-
-### Want the Old Zookeeper Setup?
-
-If you specifically need Zookeeper (e.g., for legacy compatibility), you can switch to the traditional setup by replacing `docker-compose.yaml` with a Zookeeper + Kafka configuration. But for this project, **KRaft is recommended**.
-
 ---
 
-## 🔄 Running the Pipeline
+## Run the Pipeline
 
-Once Kafka is running via Docker:
-
-### 1. Train the Model
+### 1) Train model
 
 ```bash
 python train_model.py
 ```
 
-This generates `model.pkl`.
-
-### 2. Start the Consumer (Terminal 1)
-
-```bash
-python consumer.py
-```
-
-The consumer will wait for messages on the `transactions` topic.
-
-### 3. Start the Producer (Terminal 2)
-
-```bash
-python producer.py
-```
-
-The producer will stream credit card transactions into Kafka, and the consumer will process them in batches of 100.
-
-### Alternative: Run Standalone (No Kafka)
-
-If you want to test drift detection without Kafka:
+### 2) Run producer + consumer together
 
 ```bash
 python main.py
 ```
 
-This runs all checks (drift, anomaly, data quality) in a local simulation.
+### Alternative: run separately
+
+Consumer:
+
+```bash
+python consumer.py
+```
+
+Producer:
+
+```bash
+python producer.py
+```
 
 ---
 
-## 📊 Dataset
+## Environment Variables
 
-This project uses the **Credit Card Fraud Detection Dataset** from Kaggle/UCI ML Repository.
+Loaded via `python-dotenv` (`.env` supported).
 
-- **Download**: [Kaggle - Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
-- **File**: Place `creditcard.csv` in the project root directory
-- **Features**: 30 numerical features (V1-V28, Time, Amount) + Class label (0 = normal, 1 = fraud)
+### Producer
+- `PRODUCER_MAX_RECORDS` (default `2000`)
+- `PRODUCER_DRIFT_START` (default `1000`)
+- `PRODUCER_DRIFT_SCALE` (default `5.0`)
+- `PRODUCER_SLEEP` (default `0.005`)
 
----
+### Consumer
+- `CONSUMER_GROUP_ID` (default `drift-detection-group`)
+- `CONSUMER_AUTO_OFFSET_RESET` (default `earliest`)
+- `CONSUMER_BATCH_SIZE` (default `100`)
+- `REFERENCE_REFRESH_EVERY` (default `0`, fixed PSI baseline)
+- `LATENCY_BASELINE_BATCHES` (default `5`)
 
-## 🛠️ Tech Stack
-
-| Technology | Purpose |
-|-----------|---------|
-| Python 3 | Core language |
-| scikit-learn | Isolation Forest model |
-| pandas / numpy | Data manipulation |
-| Kafka | Real-time streaming |
-| Zookeeper | Kafka coordination |
-| scipy | Statistical tests (Chi-square) |
-| joblib | Model serialization |
-| smtplib | Email alerting |
-
----
-
-## 📧 Alert Configuration
-
-The `send_email_alert()` function in `main.py` uses Gmail SMTP. To use your own email:
-
-1. Update the `sender` and `receiver` email addresses
-2. Use an **App Password** (not your regular Gmail password)
-3. Enable 2-Factor Authentication on your Google account and generate an App Password at [Google Account Settings](https://myaccount.google.com/apppasswords)
+### Email
+- `ALERT_EMAIL_SENDER` (default `mtechproject2001@gmail.com`)
+- `ALERT_EMAIL_RECEIVER` (default `mtechproject2001@gmail.com`)
+- `ALERT_EMAIL_PASSWORD` (required for SMTP send)
 
 ---
 
-## ⚙️ Configuration Summary
+## Logging
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `BATCH_SIZE` | 100 | Number of records processed per batch |
-| `contamination` | 0.02 | Expected proportion of anomalies in data |
-| `PSI threshold` | 0.25 | Triggers alert when PSI exceeds this value |
-| `Chi-square p-value` | 0.05 | Triggers alert when p-value drops below this |
-| `Anomaly rate threshold` | 0.10 (10%) | Triggers alert when anomaly rate exceeds this |
-| `Outlier threshold` | 50 | Triggers alert when outliers in batch exceed this |
-| `Kafka topic` | `transactions` | Topic name for streaming data |
-| `Kafka broker` | `localhost:9092` | Bootstrap server address |
+- Configured in `logging_config.py`
+- Console + rotating file logs (`logs/run_YYYYMMDD_HHMMSS.log`)
+- Rotation: 10 MB/file, 5 backups
+- UTF-8 file encoding
 
 ---
 
-## 📝 Notes
+## Scope and Limitations
 
-- The `creditcard.csv` file is **not included** in this repository due to size (~150MB). Download it from Kaggle and place it in the project root.
-- For production, consider using environment variables for credentials (email passwords, Kafka configs) instead of hardcoding.
-- The Kafka setup in `docker-compose.yml` is for local development. For production, configure replication, security, and persistent volumes.
+Implemented in this repo:
+- Streaming inference + drift monitoring + synthetic drift evaluation
 
+Not implemented in current code:
+- Automated model retraining/orchestration
+- Model registry / canary deployment
+- Multi-layer drift ensemble beyond PSI + chi-square
+
+See `PROJECT_PROPOSAL.md` for a realistic roadmap from the current baseline.
