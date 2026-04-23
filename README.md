@@ -63,66 +63,42 @@ mlops-drift-detection/
 
 ---
 
-## 🚀 Quick Start: Run Kafka & Zookeeper with Docker
+## 🚀 Quick Start: Run Kafka with Docker (No Zookeeper Needed!)
 
-Skip the long Kafka/Zookeeper installation and setup by using **Docker**.
+Skip the long Kafka installation and setup by using **Docker**.
+
+### Do You Need Zookeeper?
+
+**No.** Your application code (`producer.py`, `consumer.py`) only connects to **Kafka on port 9092**. It never interacts with Zookeeper directly.
+
+Modern Kafka (2.8+) supports **KRaft mode**, which lets Kafka manage itself internally — no Zookeeper required. The `docker-compose.yaml` in this repo uses KRaft mode, so you only run **one container** (Kafka).
 
 ### Prerequisites
 - [Docker](https://docs.docker.com/get-docker/) installed
 - [Docker Compose](https://docs.docker.com/compose/install/) installed
 
-### Step 1: Create `docker-compose.yml`
+### Step 1: Start Kafka
 
-Create a file named `docker-compose.yml` in the project root:
-
-```yaml
-version: '3.8'
-
-services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: kafka
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-```
-
-### Step 2: Start the Services
+The project already includes `docker-compose.yaml` configured in **KRaft mode** (Zookeeper-free). Just run:
 
 ```bash
 docker-compose up -d
 ```
 
 This will:
-- Pull the official Confluent Kafka and Zookeeper images
-- Start Zookeeper on port `2181`
-- Start Kafka on port `9092`
-- Create a Kafka broker accessible at `localhost:9092`
+- Pull the official Confluent Kafka image
+- Start a single Kafka broker on port `9092`
+- No Zookeeper container is started
 
-### Step 3: Verify the Services Are Running
+### Step 2: Verify Kafka Is Running
 
 ```bash
 docker ps
 ```
 
-You should see both `zookeeper` and `kafka` containers running.
+You should see only the `kafka` container running.
 
-### Step 4: Create the Kafka Topic
+### Step 3: Create the Kafka Topic
 
 ```bash
 docker exec -it kafka kafka-topics --create --topic transactions --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
@@ -134,7 +110,7 @@ Verify the topic was created:
 docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092
 ```
 
-### Step 5: Stop the Services
+### Step 4: Stop the Services
 
 ```bash
 docker-compose down
@@ -146,11 +122,15 @@ To stop and remove all containers and volumes:
 docker-compose down -v
 ```
 
+### Want the Old Zookeeper Setup?
+
+If you specifically need Zookeeper (e.g., for legacy compatibility), you can switch to the traditional setup by replacing `docker-compose.yaml` with a Zookeeper + Kafka configuration. But for this project, **KRaft is recommended**.
+
 ---
 
 ## 🔄 Running the Pipeline
 
-Once Kafka and Zookeeper are running via Docker:
+Once Kafka is running via Docker:
 
 ### 1. Train the Model
 

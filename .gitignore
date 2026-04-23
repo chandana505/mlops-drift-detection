@@ -2,3 +2,4 @@ creditcard.csv
 __pycache__/
 *.pyc
 alerts.logcreditcard.csv 
+.venv/

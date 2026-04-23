@@ -1,0 +1,46 @@
+# ============================================================
+# KRAFT MODE (No Zookeeper Required)
+# Modern Kafka 7.x supports running without Zookeeper.
+# The app code (producer.py / consumer.py) only connects to
+# Kafka on port 9092 — it never interacts with Zookeeper.
+# ============================================================
+
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      CLUSTER_ID: 89du68i0RiegwAocFg5aXg
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  init-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: init-kafka
+    depends_on:
+      - kafka
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      echo 'Waiting for Kafka to be ready...' &&
+      cub kafka-ready -b kafka:29092 1 60 &&
+      echo 'Creating topic transactions...' &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic transactions --replication-factor 1 --partitions 1 &&
+      echo 'Topic transactions created successfully.'
+      "
+
+volumes:
+  kafka-data:
