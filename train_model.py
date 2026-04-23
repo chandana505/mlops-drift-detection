@@ -3,9 +3,9 @@ from sklearn.ensemble import IsolationForest
 import joblib
 
 # Load dataset
-df = pd.read_csv("creditcard.csv")
+df = pd.read_csv("creditcard.csv").head(5000)
 
-# Drop label column if exists
+# Prepare data
 if "Class" in df.columns:
     X = df.drop(columns=["Class"])
 else:
@@ -18,4 +18,4 @@ model.fit(X)
 # Save model
 joblib.dump(model, "model.pkl")
 
-print("Model trained and saved!")
+print("Model trained and saved as model.pkl")
